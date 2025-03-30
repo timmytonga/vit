@@ -9,6 +9,9 @@ import wandb
 from tqdm import tqdm
 from print_model_stats import print_model_stats
 
+TQDM_NCOLS=60
+
+
 def train(model, device, train_loader, optimizer, criterion, epoch):
     model.train()
     running_loss = 0.0
@@ -16,7 +19,7 @@ def train(model, device, train_loader, optimizer, criterion, epoch):
     total = 0
     log_every = 100
     print(f"[Epoch {epoch}] Training...")
-    for batch_idx, (inputs, targets) in tqdm(enumerate(train_loader), total=len(train_loader), ncols=80):
+    for batch_idx, (inputs, targets) in tqdm(enumerate(train_loader), total=len(train_loader), ncols=TQDM_NCOLS):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
@@ -44,7 +47,7 @@ def validate(model, device, val_loader, criterion, epoch):
     total = 0
     print(f"[Epoch {epoch}] Eval...")
     with torch.no_grad():
-        for inputs, targets in tqdm(val_loader, total=len(val_loader), ncols=80):
+        for inputs, targets in tqdm(val_loader, total=len(val_loader), ncols=TQDM_NCOLS):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
             loss = criterion(outputs, targets)
@@ -62,10 +65,12 @@ def validate(model, device, val_loader, criterion, epoch):
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch CIFAR100 ViT Training with WandB Logging")
-    parser.add_argument("--optimizer", type=str, default="adam", help="Optimizer to use: adam or sgd")
+    parser.add_argument("--optimizer", type=str, default="adam", 
+                        choices=["adam", "sgd", "adamw_sn"])
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs to train")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
+    parser.add_argument("--wd", type=float, default=0)
     args = parser.parse_args()
 
     # Initialize wandb logging
@@ -100,9 +105,12 @@ def main():
     print_model_stats(model)
     # Choose optimizer based on argument
     if args.optimizer.lower() == "adam":
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
     elif args.optimizer.lower() == "sgd":
-        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.wd)
+    elif args.optimizer.lower() == "adamw_sn":
+        from adamw_sn import AdamWSN
+        optimizer = AdamWSN(model.parameters(), lr=args.lr, weight_decay=args.wd)
     else:
         raise ValueError("Unsupported optimizer. Choose 'adam' or 'sgd'.")
 
