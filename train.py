@@ -80,7 +80,7 @@ def main():
     if args.optimizer == "adamw_snsm":
         run_name += f"r{args.rank}ug{args.update_proj_gap}"
     # Initialize wandb logging
-    wandb.init(project="cifar100_vit_experiment", 
+    wandb.init(project="cifar100_vit", 
                config=vars(args),
                name=run_name)
 
