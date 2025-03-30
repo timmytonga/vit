@@ -36,8 +36,6 @@ class AdamwSNSM(Optimizer):
             eps: float = 1e-6,
             weight_decay: float = 0.0,
             correct_bias: bool = True,
-            rank: int = 256,
-            update_proj_gap: int = 200,
             proj_type: str = "svd"  # choices ['svd']
     ):
         if lr < 0.0:
@@ -48,12 +46,9 @@ class AdamwSNSM(Optimizer):
             raise ValueError(f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)")
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps} - should be >= 0.0")
-        self.rank = rank
-        self.update_proj_gap = update_proj_gap
         self.proj_type= proj_type
         defaults = {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay, "correct_bias": correct_bias}
         super().__init__(params, defaults)
-        print(f"DEBUG: lr {lr} wd {weight_decay} betas {betas} rank {rank} gap {update_proj_gap} eps {eps}")
 
     @torch.no_grad()
     def step(self, closure: Callable = None):
@@ -80,26 +75,31 @@ class AdamwSNSM(Optimizer):
 
                 # subset-norm for compressing adaptive step size second moment term
                 if "reduce_dim" not in state:
-                    state["reduce_dim"] = -1 if grad.shape[-2] >= grad.shape[-1] else -2
-                
-                update_grad = torch.sum(grad**2, dim=state["reduce_dim"], keepdim=True)
+                    if grad.ndim == 1:
+                        state["reduce_dim"] = 0
+                    else:
+                        state["reduce_dim"] = -1 if grad.shape[-2] >= grad.shape[-1] else -2
 
+                # Subset Norm
+                second_moment_update = torch.sum(grad**2, dim=state["reduce_dim"], keepdim=True)
 
                 # Projection for compressing momentum term
-                if "projector" not in state:
-                    state["projector"] = SVDProjector(self.rank, update_proj_gap=self.update_proj_gap, proj_type=self.proj_type)
-                proj_grad = state["projector"].project(grad, state["step"])
-
-
+                if "rank" in group:
+                    if "projector" not in state:
+                        state["projector"] = SVDProjector(group["rank"], update_proj_gap=group["update_proj_gap"], proj_type=self.proj_type)
+                    proj_grad = state["projector"].project(grad, state["step"])
+                else:  # if not SM or module is not set then it's just standard momentum
+                    proj_grad = grad
+                    
                 # State initialization
                 if "exp_avg_sq" not in state:
                     # Exponential moving average of gradient values
                     state["exp_avg"] = torch.zeros_like(proj_grad)
                     # Exponential moving average of squared gradient values
-                    state["exp_avg_sq"] = torch.zeros_like(update_grad)
+                    state["exp_avg_sq"] = torch.zeros_like(second_moment_update)
 
                 # reset exp_avg state when we update
-                if (state["step"] > 1 and state["step"] % self.update_proj_gap == 0):
+                if ("rank" in group and state["step"] > 1 and state["step"] % group["update_proj_gap"] == 0):
                     state["exp_avg"] = torch.zeros_like(proj_grad)
 
                 # Now we are ready to update
@@ -107,13 +107,17 @@ class AdamwSNSM(Optimizer):
                 beta1, beta2 = group["betas"]
                 state["step"] += 1
 
-                # Momentum term
-                exp_avg.mul_(beta1).add_(proj_grad, alpha=(1.0 - beta1))
-                orth_comp = grad - state["projector"].project_back(proj_grad)
-                numerator = state["projector"].project_back(exp_avg) + orth_comp
+                # Subspace momentum and orthogonal SGD
+                if "rank" in group:
+                    exp_avg.mul_(beta1).add_(proj_grad, alpha=(1.0 - beta1))
+                    orth_comp = grad - state["projector"].project_back(proj_grad)
+                    numerator = state["projector"].project_back(exp_avg) + orth_comp
+                else:  # just normal full momentum
+                    exp_avg.mul_(beta1).add_(proj_grad, alpha=(1.0 - beta1))
+                    numerator = exp_avg
 
                 # Subset-norm step size term
-                exp_avg_sq.mul_(beta2).add_(update_grad, alpha=1.0 - beta2)
+                exp_avg_sq.mul_(beta2).add_(second_moment_update, alpha=1.0 - beta2)
                 denom = exp_avg_sq.sqrt().add_(group["eps"])
 
                 step_size = group["lr"]

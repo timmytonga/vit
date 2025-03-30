@@ -66,15 +66,23 @@ def validate(model, device, val_loader, criterion, epoch):
 def main():
     parser = argparse.ArgumentParser(description="PyTorch CIFAR100 ViT Training with WandB Logging")
     parser.add_argument("--optimizer", type=str, default="adam", 
-                        choices=["adam", "sgd", "adamw_sn"])
+                        choices=["adam", "sgd", "adamw_sn", "adamw_snsm"])
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs to train")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
     parser.add_argument("--wd", type=float, default=0)
+    parser.add_argument("--rank", type=int, default=128)
+    parser.add_argument("--update_proj_gap", type=int, default=200)
+    
     args = parser.parse_args()
-
+    
+    run_name = f"{args.optimizer}_lr{args.lr}_wd{args.wd}"
+    if args.optimizer == "adamw_snsm":
+        run_name += f"r{args.rank}ug{args.update_proj_gap}"
     # Initialize wandb logging
-    wandb.init(project="cifar100_vit_experiment", config=vars(args))
+    wandb.init(project="cifar100_vit_experiment", 
+               config=vars(args),
+               name=run_name)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -111,9 +119,20 @@ def main():
     elif args.optimizer.lower() == "adamw_sn":
         from adamw_sn import AdamWSN
         optimizer = AdamWSN(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    elif args.optimizer.lower() == "adamw_snsm":
+        from adamw_snsm import AdamwSNSM
+        linear_modules = [module.weight for module in model.modules() if isinstance(module, nn.Linear)]
+        regular_params = [p for p in model.parameters() if id(p) not in [id(p) for p in linear_modules]]
+        snsm_params = {'params': linear_modules, "rank": args.rank, "update_proj_gap": args.update_proj_gap}
+        param_groups = [
+            {'params': regular_params},   # this is just sn
+            snsm_params
+        ]
+        optimizer = AdamwSNSM(param_groups, lr=args.lr, weight_decay=args.wd)
     else:
         raise ValueError("Unsupported optimizer. Choose 'adam' or 'sgd'.")
 
+    print(optimizer)
     criterion = nn.CrossEntropyLoss()
 
     # Training loop
