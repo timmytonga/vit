@@ -107,7 +107,7 @@ def main():
     test_loader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     # Create the Vision Transformer model (using timm)
-    model = timm.create_model("vit_base_patch16_224", pretrained=True, num_classes=100)
+    model = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=100)
     model.to(device)
 
     print_model_stats(model)
