@@ -82,13 +82,15 @@ class AdamWSN(Optimizer):
                 if "step" not in state:
                     state["step"] = 0
                 if "reduce_dim" not in state:
-                    if grad.ndim == 1:
-                        state["reduce_dim"] = 0
-                    else:
+                    if grad.ndim == 2:
                         state["reduce_dim"] = -1 if grad.shape[-2] >= grad.shape[-1] else -2
-
+                    else:
+                        state["reduce_dim"] = None
                 # Subset Norm
-                second_moment_update = torch.sum(grad**2, dim=state["reduce_dim"], keepdim=True)
+                if state["reduce_dim"]:
+                    second_moment_update = torch.sum(grad**2, dim=state["reduce_dim"], keepdim=True)
+                else:
+                    second_moment_update = grad ** 2
 
                 beta1, beta2 = group["betas"]
 
