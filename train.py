@@ -64,7 +64,7 @@ def validate(model, device, val_loader, criterion, epoch):
     return epoch_loss, epoch_acc
 
 def main():
-    parser = argparse.ArgumentParser(description="PyTorch CIFAR100 ViT Training with WandB Logging")
+    parser = argparse.ArgumentParser(description="PyTorch CIFAR10/CIFAR100 ViT Training with WandB Logging")
     parser.add_argument("--optimizer", type=str, default="adam", 
                         choices=["adam", "sgd", "adamw_sn", "adamw_snsm"])
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
@@ -73,43 +73,64 @@ def main():
     parser.add_argument("--wd", type=float, default=0)
     parser.add_argument("--rank", type=int, default=128)
     parser.add_argument("--update_proj_gap", type=int, default=200)
+    parser.add_argument("--dataset", type=str, default="cifar100", choices=["cifar10", "cifar100"],
+                        help="Choose which dataset to benchmark: 'cifar10' or 'cifar100'")
     
     args = parser.parse_args()
     
     run_name = f"{args.optimizer}_lr{args.lr}_wd{args.wd}"
     if args.optimizer == "adamw_snsm":
         run_name += f"r{args.rank}ug{args.update_proj_gap}"
-    # Initialize wandb logging
-    wandb.init(project="cifar100_vit", 
+    
+    # Set dataset-specific parameters
+    if args.dataset == "cifar10":
+        project_name = "cifar10_vit"
+        transform_train = transforms.Compose([
+            transforms.Resize(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+        transform_test = transforms.Compose([
+            transforms.Resize(224),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+        trainset = torchvision.datasets.CIFAR10(root="./data", train=True, download=True, transform=transform_train)
+        testset = torchvision.datasets.CIFAR10(root="./data", train=False, download=True, transform=transform_test)
+        num_classes = 10
+    else:
+        project_name = "cifar100_vit"
+        transform_train = transforms.Compose([
+            transforms.Resize(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+        ])
+        transform_test = transforms.Compose([
+            transforms.Resize(224),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+        ])
+        trainset = torchvision.datasets.CIFAR100(root="./data", train=True, download=True, transform=transform_train)
+        testset = torchvision.datasets.CIFAR100(root="./data", train=False, download=True, transform=transform_test)
+        num_classes = 100
+
+    # Initialize wandb logging with the appropriate project name
+    wandb.init(project=project_name, 
                config=vars(args),
                name=run_name)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Define transforms: resize to 224 to match ViT input requirements
-    transform_train = transforms.Compose([
-        transforms.Resize(224),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
-    ])
-    transform_test = transforms.Compose([
-        transforms.Resize(224),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
-    ])
-
-    # Load CIFAR100 dataset
-    trainset = torchvision.datasets.CIFAR100(root="./data", train=True, download=True, transform=transform_train)
+    # Create data loaders
     train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=4)
-
-    testset = torchvision.datasets.CIFAR100(root="./data", train=False, download=True, transform=transform_test)
     test_loader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
-    # Create the Vision Transformer model (using timm)
-    model = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=100)
+    # Create the Vision Transformer model (using timm) with the correct number of output classes
+    model = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=num_classes)
     model.to(device)
-
+    
     print_model_stats(model)
     # Choose optimizer based on argument
     if args.optimizer.lower() == "adam":
