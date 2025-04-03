@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
-import timm  # make sure to install timm: pip install timm
+import timm  # for vit
 import wandb
 from tqdm import tqdm
 from print_model_stats import print_model_stats
@@ -82,7 +82,6 @@ def main():
     if args.optimizer == "adamw_snsm":
         run_name += f"r{args.rank}ug{args.update_proj_gap}"
     
-    # Set dataset-specific parameters
     if args.dataset == "cifar10":
         project_name = "cifar10_vit"
         transform_train = transforms.Compose([
@@ -116,23 +115,19 @@ def main():
         testset = torchvision.datasets.CIFAR100(root="./data", train=False, download=True, transform=transform_test)
         num_classes = 100
 
-    # Initialize wandb logging with the appropriate project name
     wandb.init(project=project_name, 
                config=vars(args),
                name=run_name)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Create data loaders
     train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     test_loader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
-    # Create the Vision Transformer model (using timm) with the correct number of output classes
     model = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=num_classes)
     model.to(device)
     
-    print_model_stats(model)
-    # Choose optimizer based on argument
+    print(model)
     if args.optimizer.lower() == "adam":
         optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
     elif args.optimizer.lower() == "sgd":
